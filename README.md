@@ -12,24 +12,24 @@ This is a **research project**, not a production framework.
 
 The goal was to demonstrate that **training on the Apple Neural Engine — and potentially other NPUs — is possible**, and that the barrier has always been software support, not hardware capability. The ANE is a remarkably capable piece of silicon that Apple restricts to inference-only use through CoreML. This project bypasses that restriction using reverse-engineered private APIs to show what's possible when you give the hardware a chance.
 
-### What this project is
+### What This Project Is
 
 - A proof of concept for ANE training via `_ANEClient` and `_ANECompiler` private APIs
 - A set of benchmarks documenting real ANE performance characteristics (throughput, power, SRAM behavior)
 - A reference for anyone exploring direct ANE access outside CoreML
 - Research code that I update when I find something interesting
 
-### What this project is not
+### What This Project Is Not
 
 - A maintained framework or library
 - A replacement for CoreML, MLX, llama.cpp, or any production inference stack
 - A path to training large models on consumer hardware (yet)
 
-### On the hype
+### On The Hype
 
 Some coverage of this project has overstated its implications. To be clear:
 
-- Training works, but utilization is low (~2-3% of peak) with significant engineering challenges remaining
+- Training works, but utilization is low (~5-9% of peak) with significant engineering challenges remaining
 - Many element-wise operations still fall back to CPU
 - This does **not** replace GPU training for anything beyond small research models today
 
@@ -37,7 +37,7 @@ The honest results — including all limitations — are documented in the accom
 - [Part 1: Reverse Engineering](https://maderix.substack.com/p/inside-the-m4-apple-neural-engine)
 - [Part 2: Benchmarks](https://maderix.substack.com/p/inside-the-m4-apple-neural-engine-615)
 
-### On maintenance
+### On Maintenance
 
 I don't intend to grow this into a large community project. My focus is on original research (compiler infrastructure for edge AI optimization), and maintaining an open-source framework takes time away from that.
 
@@ -57,11 +57,12 @@ This is MIT licensed for a reason. Everyone now has access to AI-assisted develo
 
 A from-scratch implementation of transformer training (forward + backward pass) running on the ANE in Apple Silicon. The ANE is a 15.8 TFLOPS (M4) inference accelerator that Apple does not expose for training. This project reverse-engineers the `_ANEClient` / `_ANECompiler` private APIs and the MIL (Model Intermediate Language) format to run custom compute graphs — including backpropagation — directly on ANE hardware.
 
-**Current results (M4, single transformer layer, dim=768, seq=512):**
-- 9.3 ms/step, 11.2% ANE utilization (1.78 TFLOPS sustained)
-- 6 ANE kernel dispatches per training step
+**Current results — Stories110M (12-layer, dim=768, seq=256, 109M params):**
+- Static pipeline: **91 ms/step** (M3 Ultra), **106 ms/step** (M4)
+- Dynamic pipeline: **110 ms/step**, no recompilation
+- 72 ANE kernels per step (static), 9 shared kernels (dynamic)
 - All forward and backward dx passes on ANE, dW gradients on CPU (Accelerate cblas)
-- Adam optimizer, gradient accumulation, checkpoint/resume
+- Adam optimizer, gradient accumulation, checkpoint/resume via exec() restart
 
 ## Architecture
 
@@ -110,6 +111,14 @@ Key optimizations:
     └── Makefile
 ```
 
+## Training Data
+
+Training requires pretokenized TinyStories data. To download:
+```bash
+cd training && bash download_data.sh
+```
+See [training/README.md](training/README.md) for detailed training instructions.
+
 ## Building
 
 Requires macOS 15+ on Apple Silicon (tested on M4).
@@ -138,8 +147,8 @@ No external dependencies. Uses only system frameworks + private ANE APIs resolve
 
 - **SDPA causal masking** — ANE hardware ignores `attn_mask` in SDPA ops; causal attention is decomposed into separate Q@K^T (ANE) → mask+softmax (ANE via add+softmax) → scores@V (ANE)
 - **~119 compile limit** — ANE compiler leaks resources; worked around via `exec()` restart with checkpoint
-- **Single layer** — Currently trains one transformer layer; multi-layer would need pipeline scheduling
-- **Synthetic data** — Currently uses random data for benchmarking; real tokenized data support is WIP
+- **Compile overhead** — Static pipeline recompiles 60+ kernels every 10 steps (~3.7s); dynamic pipeline avoids this
+- **Low utilization** — Training sustains ~1-2 TFLOPS out of 15.8+ peak due to CPU fallbacks and I/O overhead
 
 ## Performance History
 
